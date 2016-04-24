@@ -149,7 +149,7 @@ varImpPlot(rf.fit$finalModel)
 
 ```
 
-### Testing and  Out of Sample test
+## Testing and  Out of Sample test
 We now test the Random Forest model with testing set. The accuracy for out of sample are very good.
 We kept this model for the 20  out of sample test (we the model get full score). 
 Due to the high  degree of accuracy of this model we do not implement an ensamble mobdel.
@@ -160,7 +160,25 @@ confusionMatrix(testing$classe,rf.pedict  )
 
 ```
 
+# Test  with the 20 Test Case
 
+```{r}
+
+sensor_data.test <- read.table(file = "//home//boole2//coursera//machinelearning//exame//pml-testing.csv",sep = ",",header = TRUE , na.strings =c("NA", "", "#DIV/0!") )
+index.row.test <- apply(sensor_data.test, 2,  function(x){ sum(is.na(x) ) })
+# we romove colum with NA  (here the colum are full NA or without NA  so we do not use a threshold )
+sensor_data_row.test <- sensor_data.test[ , which(index.row.test == 0)]
+#we have only 60 observable for row data.
+sensor_data_row.test <- sensor_data_row.test[, -c(1:7,53)]
+
+```
+Final resul that all match with quitz test.
+
+```{r,message=F, warning=F }
+#sensor_data_row.test <- cbind( sensor_data_row.test, gyros_forearm_z = rep(0, 20))
+rf.pedict.test <- predict(rf.fit, sensor_data_row.test )
+rf.pedict.test
+```
 
 # Comparison with Window Summary Data 
 The trade off of the firt Stage was the compuation time of Random Forest over Row data.
@@ -170,6 +188,7 @@ So we try in this stage, to learn a Generalized Boosted Classifier over  just th
 
 Preparation of Training set and test set. Basic we extract only the  subset with New_windw = yes. 
 they are 406 sample. Tne we proceed in the sameway as for row data.
+
 ```{r,message=F, warning=F }
 # we esxtract data set for  Windowed Summarized data.
 sensor_data.w.summary <- sensor_data[ sensor_data$new_window ==  "yes",  ]
