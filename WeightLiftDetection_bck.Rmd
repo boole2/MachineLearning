@@ -1,0 +1,223 @@
+---
+title: "WeightLiftDetection"
+author: "boole2"
+date: "April 22, 2016"
+output: html_document
+---
+
+# Abstract
+With the increasing use of dressable devices able to collect personal activity information, the development of algorithm  and related consumer or mediacal application are growing very fast.
+In this document we afford the proble of detecting not only the type of activity but also to indentify if the activity is implemented  right or wrong. The context is  Gym Weight Lifting  with free tool, a common gym activity.
+
+The data came from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.  One (class A) correspond to a  correct execution of the weight lift exercise, the others 4 are all wrong.
+
+After assessing the Data Set and their measure and meaning, we have proceed with data cleaning, correlation measure  and data preparation.
+After reduction of the observable set,  we have created a test set  splitting the trainig sample for  validation of the model (directly form training sample).
+In the second stage, we have proceed with model selection starting from  a basic Classification Tree with very poor result (accuracy almost 0.5), and then proof a Random Forest. The result of this model  for in sample and out of sample (testig) are excellent, and I have decided to retain this model for the 20 Test cases.
+The very high computation time for row data set have pushed me to try a GBM over the windows sammarized data (present in the original data set). The GBM perform with accuracy about 77% for out of sample but with very  fast compuation time.
+
+I thankfull the Group Ware team for suppling the sample data used in the document.  <http://groupware.les.inf.puc-rio.br/har>. 
+
+
+```{r, echo = FALSE, message=F, warning=F }
+library(caret)
+library(ggplot2)
+library(rattle)
+library(rpart.plot)
+library(corrplot)
+
+```
+
+# Data Set
+As reported in the linked article the Data cames from sensors attach to the body and to the weight. 
+The data came from accelerometers on the belt, forearm, arm, and dumbell of 6 participants.
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+The sensors are sampled with 45 Hz frequency and they measure the Euler angles  to Detect the Spatial orientation of each Sensored Point (on the body and the weight). The three  Euler angles and the accollerometer and gyroscope measure are given as row data and as  means base on sliding windows of variable 0.5 till 2.5 seconds. 
+For the first stage and model selection we use only row data, removing window summary data. For the second stage we use only Window Samarized data for comparison of the result.
+
+```{r,message=F, warning=F }
+##Load Data Set.
+sensor_data <- read.table(file = "//home//boole2//coursera//machinelearning//exame//pml-training.csv",sep = ",",header = TRUE , na.strings =c("NA", "", "#DIV/0!") )
+# row data only
+sensor_data_row <- sensor_data[ sensor_data$new_window ==  "no",  ]
+# we romove colum with NA 
+index.row <- apply(sensor_data_row, 2,  function(x){ sum(is.na(x) ) })
+# we romove colum with NA  (here the colum are full NA or without NA  so we do not use a threshold )
+sensor_data_row <- sensor_data_row[ , which(index.row == 0)]
+#we have only 60 observable for row data.
+dim(sensor_data_row)
+
+```
+Removing not useful data and index from data set (first seven columns)
+```{r}
+sensor_data_row <- sensor_data_row[, -c(1:7)]
+```
+
+Preparation of Training set and test set for basic Cross Validation
+```{r}
+set.seed(12345)
+inTraining <- createDataPartition(y= sensor_data_row$classe, p= 0.6, list = FALSE)
+trainig <- sensor_data_row[inTraining, ]
+testing <- sensor_data_row[ -inTraining, ]
+dim(trainig)
+dim(testing)
+```
+
+# Exploratory Analysis and Feature Selection
+
+In this section we proceed with Feature Selection.
+First we remove variable almost zero with low variability that do not help to explane the result class. 
+We then build a Cross Correlation Matrix to detect  Covariate with  high correlation elegible for be removed (one of them) with out risk Bias but reducing variace inflations of the model.
+
+We first detect the gyro_forearm_z variable is almost zero for every measure and will be removed form the data set. 
+```{r, echo=FALSE, message=F, warning=F }
+index <- nearZeroVar(trainig, saveMetrics = TRUE)
+#index
+
+#almost zero just with an outliar  possible due to exsogenous reason
+plot(1:nrow(trainig), trainig[,46], ylab =  colnames(trainig)[46] )
+```
+
+The correlation matrix and plot reveal (blue darken dot) that there are a few variables that have more then 0.95 but less then 1 
+correlation factor. We decide to retain all this variable because the correlation is in any case capped to 1.
+```{r,message=F, warning=F }
+M <- abs ( cor(trainig[, -53]) )
+diag(M) <- 0
+#  observable with high correlation
+ which ( M  > 0.95, arr.ind = T)
+ 
+#corrplot(M, order = "FPC", method = "circle",   type = "lower",
+ #        tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+
+trainig <- trainig[,-46]
+testing <- testing[,-46]
+
+```
+
+# Model Selection
+Our first approch  is to start simple,  keeping  inference capability at the first stage.
+So we try first with a Classification Tree model.
+
+## Classification Tree
+
+The plot and variable importance ranking let us understand which observables are "bouble up" as rooted of the trees: the Roll_Belt and the  Pitch_Forearm and the Magnet_Dumpbell_y are selected as strong tree purifier althought the overall classification performance (accuracy) of the tree score only 0.50 that is in any case a in improvment respect to randomic classifier (0.20 for five classes). The Sensitivity is only good for class A.
+```{r, echo=FALSE, message=F, warning=F }
+tree.fit <- train( classe ~. ,  method = "rpart", data = trainig)
+print(tree.fit)
+
+fancyRpartPlot(tree.fit$finalModel)
+varImp(tree.fit)
+
+
+```
+Sensitivity of 0.5 is better then randomic class selection (0.20)
+```{r,message=F, warning=F }
+tree.pedict <- predict(tree.fit, testing[-52] )
+# very poor - Sensitivity of 0.5 is almost  equal to null model (randomic)
+confusionMatrix(testing$classe,tree.pedict  )
+
+```
+
+
+
+## Random Forest
+
+To drammatically improve the model we try a Random Forest over Row Data.
+
+```{r,message=F, warning=F }
+#avoid recompute every markdown run
+if (FALSE){
+        set.seed(434562)
+
+        #we use default cross validation paramiter
+        rf.fit  <- train( classe ~. ,  method = "rf", data = trainig)
+         save(rf.fit, file = "rffit.RData")
+}
+         load(file = "rffit.RData", verbose = TRUE)
+
+```
+
+New the accuracy is very high for in sample score (97.6%) and the Variable importance score show us that the algorithm has kept the  first two most important Variable as in the Classification Tree (Roll_Belt and the  Pitch_Forearm), but then quite deep "shaked" the variable and choose different  order for the other tree  decision nodes. (as collective effect of all the Trees belonging the forest).
+
+```{r,message=F, warning=F }
+
+print(rf.fit)
+varImp(rf.fit)
+
+varImpPlot(rf.fit$finalModel)
+
+```
+
+### Testing and  Out of Sample test
+We now test the Random Forest model with testing set. The accuracy for out of sample are very good.
+We kept this model for the 20  out of sample test (we the model get full score). 
+Due to the high  degree of accuracy of this model we do not implement an ensamble mobdel.
+```{r,message=F, warning=F }
+rf.pedict <- predict(rf.fit, testing[-52] )
+#
+confusionMatrix(testing$classe,rf.pedict  )
+
+```
+
+
+
+# Comparison with Window Summary Data 
+The trade off of the firt Stage was the compuation time of Random Forest over Row data.
+So we try in this stage, to learn a Generalized Boosted Classifier over  just the Windowed Sammarized data.
+
+## Generalized Boosted Classifier
+
+Preparation of Training set and test set. Basic we extract only the  subset with New_windw = yes. 
+they are 406 sample. Tne we proceed in the sameway as for row data.
+```{r,message=F, warning=F }
+# we esxtract data set for  Windowed Summarized data.
+sensor_data.w.summary <- sensor_data[ sensor_data$new_window ==  "yes",  ]
+dim(sensor_data.w.summary)
+index.window <- apply(sensor_data.w.summary, 2,  function(x){ sum(is.na(x) ) })
+
+## we remove column with more  of NA
+sensor_data.w.summary <- sensor_data.w.summary[ , which(index.window  == 0 )]
+# we have 120 observales for the windows.
+dim(sensor_data.w.summary)
+sensor_data.w.summary <- sensor_data.w.summary[, -c(1:7)]
+
+set.seed(12345)
+inTraining <- createDataPartition(y= sensor_data.w.summary$classe, p= 0.6, list = FALSE)
+trainig <- sensor_data.w.summary[inTraining, ]
+testing <- sensor_data.w.summary[ -inTraining, ]
+```
+
+```{r,message=F, warning=F }
+ 
+# to avoid recomputation
+if (FALSE){
+        set.seed(434562)
+
+         ct <- trainControl(method="repeatedcv", number=8, repeats = 8)
+         
+        gbm.fit  <- train( classe ~. ,  method = "gbm", data = trainig, trControl = ct, verbose = FALSE )
+         save(gbm.fit, file = "gbmfit.RData")
+}
+      load(file = "gbmfit.RData", verbose = TRUE)
+
+
+print(gbm.fit)
+varImp(gbm.fit)
+```
+The accuracy for out of sample data for GBM over windowed is in any case  good.
+```{r, message=F, warning=F }
+
+dim(testing[-ncol(testing)])
+gbm.pedict <- predict(gbm.fit, testing[,-ncol(testing)] )
+length(testing$classe)
+length(gbm.pedict)
+confusionMatrix(testing$classe,gbm.pedict  )
+
+```
+
+
+# Conclusion
+
+The Random Forest base on Row data samples perform very well with testing and out of sample data set with an Accuracy almost 98%. The computational cost is instead high. For this reason we have try also  a Generalized Boosted Regression Model with embedded Cross K-Fold (8)  Validation over the Window Averaged measures. In this  scenario the Observaton are only 406 while varibale are 120 (about 8 - 10 minutes for the over all test, base on variable window of 0.5 - 2.5 second) but the computational time is  reduced a lot. The Accuracy of this model for out of sample data is about 77% that it's a good result respect the trade off of computation time vs accuracy.
+
